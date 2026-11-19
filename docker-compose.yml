@@ -30,6 +30,8 @@ services:
       DB_USER: seatrush
       DB_PASSWORD: seatrush_dev
       DB_NAME: seatrush
+      HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-300}
+      MAX_SEATS_PER_USER: ${MAX_SEATS_PER_USER:-4}
     depends_on:
       db:
         condition: service_healthy
