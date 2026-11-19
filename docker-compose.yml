@@ -1,0 +1,47 @@
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: seatrush
+      POSTGRES_PASSWORD: seatrush_dev
+      POSTGRES_DB: seatrush
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./api/sql/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatrush -d seatrush"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: seatrush
+      DB_PASSWORD: seatrush_dev
+      DB_NAME: seatrush
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
