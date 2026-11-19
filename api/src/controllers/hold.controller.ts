@@ -22,17 +22,18 @@ export async function createHoldController(
 
     let status = 500;
 
-        if (
-    message === "Invalid hold information" ||
-    message === "Duplicate seats are not allowed" ||
-    message === "Invalid UUID"
+    if (
+      message === "Invalid hold information" ||
+      message === "Duplicate seats are not allowed" ||
+      message === "Invalid UUID"
     ) {
-    status = 400;
+      status = 400;
     } else if (message === "Event is not on sale yet") {
       status = 403;
     } else if (
       message === "One or more seats are unavailable" ||
-      message === "Seat limit exceeded"
+      message === "Seat limit exceeded" ||
+      message === "This selection would leave a single isolated seat"
     ) {
       status = 409;
     } else {

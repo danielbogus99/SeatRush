@@ -1,12 +1,20 @@
+
 import { pool } from "@/db/pool";
 import { findAvailableSeats } from "@/repositories/bestAvailable.repository";
+import { findEventSeatAvailability } from "@/repositories/hold.repository";
 import type { BestAvailableInput, BestAvailableResult, BestAvailableSeatRow } from "@/types/bestAvailable.types";
 import { createHoldInTransaction } from "@/services/hold.service";
 import type { CreateHoldResult } from "@/types/hold.types";
+import { createsLoneSeat } from "@/utils/noLoneSeats";
+
+type EventSeatAvailability = Awaited<
+  ReturnType<typeof findEventSeatAvailability>
+>;
 
 export function selectBestSeats(
   availableSeats: BestAvailableSeatRow[],
-  quantity: number
+  quantity: number,
+  eventSeats?: EventSeatAvailability
 ): BestAvailableSeatRow[] {
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 4) {
     throw new Error("Quantity must be between 1 and 4");
@@ -35,7 +43,6 @@ export function selectBestSeats(
     rowSeats.sort((a, b) => a.seat_number - b.seat_number);
 
     const rowLabel = rowSeats[0].row_label;
-
     const rowCenter = Number(rowSeats[0].row_center);
 
     for (let i = 0; i <= rowSeats.length - quantity; i++) {
@@ -48,6 +55,16 @@ export function selectBestSeats(
       );
 
       if (!consecutive) {
+        continue;
+      }
+
+      const selectedSeatIds = group.map((seat) => seat.id);
+
+      // Reject candidates that create a new isolated seat.
+      if (
+        eventSeats &&
+        createsLoneSeat(eventSeats, selectedSeatIds)
+      ) {
         continue;
       }
 
@@ -107,9 +124,15 @@ export async function findBestAvailableSeats(
       input.max_price_agorot
     );
 
+    const eventSeats = await findEventSeatAvailability(
+      client,
+      eventId
+    );
+
     const selectedSeats = selectBestSeats(
       availableSeats,
-      input.quantity
+      input.quantity,
+      eventSeats
     );
 
     if (selectedSeats.length !== input.quantity) {
@@ -178,9 +201,15 @@ export async function createBestAvailableHold(
       input.max_price_agorot
     );
 
+    const eventSeats = await findEventSeatAvailability(
+      client,
+      eventId
+    );
+
     const selectedSeats = selectBestSeats(
       availableSeats,
-      input.quantity
+      input.quantity,
+      eventSeats
     );
 
     if (selectedSeats.length !== input.quantity) {
@@ -206,4 +235,3 @@ export async function createBestAvailableHold(
     client.release();
   }
 }
-

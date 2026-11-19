@@ -36,7 +36,7 @@ describe("Rule 7 - Checkout", () => {
         'Test Venue',
         NOW() + INTERVAL '7 days',
         NOW() - INTERVAL '1 hour',
-        1, 2
+        1, 4
       )
       RETURNING id
       `
@@ -55,7 +55,7 @@ describe("Rule 7 - Checkout", () => {
       [eventId]
     );
 
-    for (let number = 1; number <= 2; number++) {
+    for (let number = 1; number <= 4; number++) {
       const seat = await pool.query<{ id: string }>(
         `
         INSERT INTO seats (
@@ -132,11 +132,17 @@ describe("Rule 7 - Checkout", () => {
     );
 
     if (fan1Id) {
-      await pool.query("DELETE FROM fans WHERE id = $1", [fan1Id]);
+      await pool.query(
+        "DELETE FROM fans WHERE id = $1",
+        [fan1Id]
+      );
     }
 
     if (fan2Id) {
-      await pool.query("DELETE FROM fans WHERE id = $1", [fan2Id]);
+      await pool.query(
+        "DELETE FROM fans WHERE id = $1",
+        [fan2Id]
+      );
     }
   });
 
@@ -166,7 +172,7 @@ describe("Rule 7 - Checkout", () => {
   it("2. Returns the same order on repeated checkout", async () => {
     const hold = await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[0]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
 
     const first = await checkout(hold.hold_id, {
@@ -192,7 +198,7 @@ describe("Rule 7 - Checkout", () => {
   it("3. Rejects checkout by another fan", async () => {
     const hold = await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[0]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
 
     await expect(
@@ -212,7 +218,7 @@ describe("Rule 7 - Checkout", () => {
   it("4. Rejects checkout of an expired hold", async () => {
     const hold = await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[0]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
 
     await pool.query(
@@ -241,7 +247,7 @@ describe("Rule 7 - Checkout", () => {
   it("5. Rejects checkout of a released hold", async () => {
     const hold = await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[0]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
 
     await pool.query(
@@ -277,7 +283,7 @@ describe("Rule 7 - Checkout", () => {
     expect(tickets[0].event_id).toBe(eventId);
     expect(tickets[0].total_agorot).toBe(20000);
     expect([...tickets[0].seat_ids].sort()).toEqual(
-      [...seatIds].sort()
+      [seatIds[0], seatIds[1]].sort()
     );
 
     const otherFanTickets = await getFanOrders(fan2Id);

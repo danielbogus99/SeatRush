@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "@/db/pool";
@@ -32,7 +33,7 @@ describe("Rule 8 - Concurrency", () => {
         'Test Venue',
         NOW() + INTERVAL '7 days',
         NOW() - INTERVAL '1 hour',
-        1, 5
+        5, 1
       )
       RETURNING id
       `
@@ -45,22 +46,25 @@ describe("Rule 8 - Concurrency", () => {
       INSERT INTO zones (
         event_id, name, price_agorot, start_row, end_row
       )
-      VALUES ($1, 'Regular', 10000, 'A', 'A')
+      VALUES ($1, 'Regular', 10000, 'A', 'E')
       RETURNING id
       `,
       [eventId]
     );
 
-    for (let number = 1; number <= 5; number++) {
+    // One seat per row, so no new lone seat can be created.
+    const rowLabels = ["A", "B", "C", "D", "E"];
+
+    for (const rowLabel of rowLabels) {
       const seat = await pool.query<{ id: string }>(
         `
         INSERT INTO seats (
           event_id, zone_id, row_label, seat_number
         )
-        VALUES ($1, $2, 'A', $3)
+        VALUES ($1, $2, $3, 1)
         RETURNING id
         `,
-        [eventId, zone.rows[0].id, number]
+        [eventId, zone.rows[0].id, rowLabel]
       );
 
       seatIds.push(seat.rows[0].id);
@@ -230,6 +234,15 @@ describe("Rule 8 - Concurrency", () => {
 
     expect(successful).toHaveLength(4);
     expect(failed).toHaveLength(1);
+
+    // Confirm that the fifth request was rejected by the seat limit.
+    const failureReasons = failed.map((result) =>
+      result.status === "rejected"
+        ? String(result.reason?.message ?? result.reason)
+        : ""
+    );
+
+    expect(failureReasons).toEqual(["Seat limit exceeded"]);
 
     const saved = await pool.query<{ count: string }>(
       `

@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { pool } from "@/db/pool";
@@ -158,9 +159,10 @@ describe("Rule 6 - Best Available", () => {
   });
 
   it("2. Skips occupied seats", async () => {
+    // Occupy A1 and A2 legally.
     await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[3], seatIds[4]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
 
     const hold = await createBestAvailableHold(eventId, {
@@ -168,22 +170,51 @@ describe("Rule 6 - Best Available", () => {
       quantity: 2,
     });
 
+    // A3 and A4 are the best legal adjacent pair.
     expect(hold.seat_ids).toEqual([
-      seatIds[1],
       seatIds[2],
+      seatIds[3],
     ]);
   });
 
   it("3. Rejects when no adjacent group exists", async () => {
-    await createHold(eventId, {
-      fan_id: fan1Id,
-      seat_ids: [
-        seatIds[1],
-        seatIds[3],
-        seatIds[5],
-        seatIds[7],
-      ],
-    });
+    // Build a test layout with two separate one-seat rows.
+    // No adjacent pair exists anywhere in this event.
+    await pool.query(
+      `
+      DELETE FROM seats
+      WHERE event_id = $1
+        AND id <> ALL($2::uuid[])
+      `,
+      [eventId, [seatIds[0], seatIds[1]]]
+    );
+
+    await pool.query(
+      `
+      UPDATE seats
+      SET row_label = 'B', seat_number = 1
+      WHERE id = $1
+      `,
+      [seatIds[1]]
+    );
+
+    await pool.query(
+      `
+      UPDATE zones
+      SET end_row = 'B'
+      WHERE event_id = $1
+      `,
+      [eventId]
+    );
+
+    await pool.query(
+      `
+      UPDATE events
+      SET row_count = 2, seats_per_row = 1
+      WHERE id = $1
+      `,
+      [eventId]
+    );
 
     await expect(
       createBestAvailableHold(eventId, {

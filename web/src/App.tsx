@@ -33,18 +33,12 @@ import MyTickets from "@/components/tickets/MyTickets";
 import "@/App.css";
 
 type HoldsByEvent = Record<string, CreateHoldResult>;
-type OrdersByEvent = Record<string, CheckoutResult>;
 type FanPage = "events" | "tickets";
 
 const HOLDS_PREFIX = "seatrush_active_holds_";
-const ORDERS_PREFIX = "seatrush_orders_";
 
 function getHoldsKey(fanId: string): string {
   return `${HOLDS_PREFIX}${fanId}`;
-}
-
-function getOrdersKey(fanId: string): string {
-  return `${ORDERS_PREFIX}${fanId}`;
 }
 
 function isValidHold(
@@ -95,47 +89,12 @@ function loadHolds(fanId: string | null): HoldsByEvent {
   }
 }
 
-function loadOrders(fanId: string | null): OrdersByEvent {
-  if (!fanId) return {};
-
-  try {
-    const saved = sessionStorage.getItem(getOrdersKey(fanId));
-    if (!saved) return {};
-
-    const parsed: unknown = JSON.parse(saved);
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const result: OrdersByEvent = {};
-
-    for (const [eventId, value] of Object.entries(parsed)) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        continue;
-      }
-
-      const order = value as Partial<CheckoutResult>;
-
-      if (
-        typeof order.order_id === "string" &&
-        typeof order.hold_id === "string" &&
-        order.fan_id === fanId &&
-        typeof order.total_agorot === "number" &&
-        typeof order.created_at === "string"
-      ) {
-        result[eventId] = order as CheckoutResult;
-      }
-    }
-
-    return result;
-  } catch {
-    return {};
-  }
-}
-
 function errorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback;
+
+  if (/single isolated seat/i.test(error.message)) {
+    return "This selection would leave a single isolated seat. Please choose different seats.";
+  }
 
   if (/409|conflict|unavailable|already held/i.test(error.message)) {
     return "These seats are no longer available. Please choose different seats.";
@@ -167,13 +126,15 @@ function App() {
   const [seats, setSeats] = useState<Seat[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
 
-  // Holds and orders
+  // Holds
   const [holdsByEvent, setHoldsByEvent] = useState<HoldsByEvent>(
     () => loadHolds(fan?.id ?? null)
   );
 
-  const [ordersByEvent, setOrdersByEvent] = useState<OrdersByEvent>(
-    () => loadOrders(fan?.id ?? null)
+  // Only the booking confirmed in the current flow.
+  // Historical orders are loaded by MyTickets from the backend.
+  const [currentBooking, setCurrentBooking] = useState<CheckoutResult | null>(
+    null
   );
 
   // Clock
@@ -199,7 +160,6 @@ function App() {
 
   const fanIdRef = useRef<string | null>(fan?.id ?? null);
   const holdsRef = useRef<HoldsByEvent>(holdsByEvent);
-  const ordersRef = useRef<OrdersByEvent>(ordersByEvent);
 
   // Derived values
   const selectedEventId = selectedEvent?.id ?? null;
@@ -208,9 +168,7 @@ function App() {
     ? holdsByEvent[selectedEventId] ?? null
     : null;
 
-  const completedOrder = selectedEventId
-    ? ordersByEvent[selectedEventId] ?? null
-    : null;
+  const completedOrder = currentBooking;
 
   const isBusy =
     seatsLoading ||
@@ -239,7 +197,10 @@ function App() {
       setHoldsByEvent(next);
 
       try {
-        sessionStorage.setItem(getHoldsKey(ownerId), JSON.stringify(next));
+        sessionStorage.setItem(
+          getHoldsKey(ownerId),
+          JSON.stringify(next)
+        );
       } catch (err) {
         console.error("Failed to save holds:", err);
       }
@@ -276,31 +237,6 @@ function App() {
       updateHolds(next, ownerId);
     },
     [updateHolds]
-  );
-
-  // -----------------------------
-  // Order storage
-  // -----------------------------
-
-  const saveOrder = useCallback(
-    (eventId: string, order: CheckoutResult, ownerId: string) => {
-      if (fanIdRef.current !== ownerId) return;
-
-      const next = {
-        ...ordersRef.current,
-        [eventId]: order,
-      };
-
-      ordersRef.current = next;
-      setOrdersByEvent(next);
-
-      try {
-        sessionStorage.setItem(getOrdersKey(ownerId), JSON.stringify(next));
-      } catch (err) {
-        console.error("Failed to save order:", err);
-      }
-    },
-    []
   );
 
   // -----------------------------
@@ -344,7 +280,9 @@ function App() {
         setSelectedSeatIds([]);
 
         if (showMessage) {
-          setNotice("Your hold has expired. Please select your seats again.");
+          setNotice(
+            "Your hold has expired. Please select your seats again."
+          );
         }
 
         try {
@@ -419,7 +357,11 @@ function App() {
   // -----------------------------
 
   useEffect(() => {
-    if (!selectedEventId || !isLoggedIn || currentPage !== "events") {
+    if (
+      !selectedEventId ||
+      !isLoggedIn ||
+      currentPage !== "events"
+    ) {
       return;
     }
 
@@ -445,6 +387,7 @@ function App() {
     setSelectedEvent(null);
     setSeats([]);
     setSelectedSeatIds([]);
+    setCurrentBooking(null);
     setError(null);
     setNotice(null);
   }
@@ -477,15 +420,12 @@ function App() {
     fanIdRef.current = fanId;
 
     const nextHolds = loadHolds(fanId);
-    const nextOrders = loadOrders(fanId);
 
     holdsRef.current = nextHolds;
-    ordersRef.current = nextOrders;
-
     setHoldsByEvent(nextHolds);
-    setOrdersByEvent(nextOrders);
 
     expiredHoldIds.current.clear();
+    setCurrentBooking(null);
   }
 
   function handleLoginSuccess(newFan: Fan) {
@@ -528,7 +468,9 @@ function App() {
     });
 
     setCreateEventOpen(false);
-    setNotice(`Event "${event.name}" created successfully!`);
+    setNotice(
+      `Event "${event.name}" created successfully!`
+    );
   }
 
   // -----------------------------
@@ -570,6 +512,7 @@ function App() {
     setSeatsLoading(true);
     setError(null);
     setNotice(null);
+    setCurrentBooking(null);
     setSelectedSeatIds([]);
 
     const requestId = ++requestIdRef.current;
@@ -663,7 +606,9 @@ function App() {
         await refreshSeats(eventId, false);
       } catch (err) {
         console.error("Seat refresh failed:", err);
-        setNotice("Seats held, but the map could not be refreshed.");
+        setNotice(
+          "Seats held, but the map could not be refreshed."
+        );
       }
     } catch (err) {
       setError(errorMessage(err, "Failed to create hold"));
@@ -716,10 +661,14 @@ function App() {
         await refreshSeats(eventId, false);
       } catch (err) {
         console.error("Seat refresh failed:", err);
-        setNotice("Seats held, but the map could not be refreshed.");
+        setNotice(
+          "Seats held, but the map could not be refreshed."
+        );
       }
     } catch (err) {
-      setError(errorMessage(err, "Failed to find best available seats"));
+      setError(
+        errorMessage(err, "Failed to find best available seats")
+      );
 
       try {
         await refreshSeats(eventId);
@@ -758,19 +707,29 @@ function App() {
         fan_id: hold.fan_id,
       });
 
-      removeHold(hold.event_id, hold.hold_id, hold.fan_id);
+      removeHold(
+        hold.event_id,
+        hold.hold_id,
+        hold.fan_id
+      );
 
       setSelectedSeatIds([]);
-      setNotice("Your seats have been released successfully.");
+      setNotice(
+        "Your seats have been released successfully."
+      );
 
       try {
         await refreshSeats(hold.event_id);
       } catch (err) {
         console.error("Seat refresh failed:", err);
-        setError("Hold released, but failed to refresh seats.");
+        setError(
+          "Hold released, but failed to refresh seats."
+        );
       }
     } catch (err) {
-      setError(errorMessage(err, "Failed to release hold"));
+      setError(
+        errorMessage(err, "Failed to release hold")
+      );
     } finally {
       operationInProgress.current = false;
       setIsReleasing(false);
@@ -808,19 +767,27 @@ function App() {
         fan_id: hold.fan_id,
       });
 
-      saveOrder(hold.event_id, order, hold.fan_id);
-      removeHold(hold.event_id, hold.hold_id, hold.fan_id);
+      removeHold(
+        hold.event_id,
+        hold.hold_id,
+        hold.fan_id
+      );
 
+      setCurrentBooking(order);
       setSelectedSeatIds([]);
 
       try {
         await refreshSeats(hold.event_id);
       } catch (err) {
         console.error("Seat refresh failed:", err);
-        setNotice("Booking confirmed, but seat refresh failed.");
+        setNotice(
+          "Booking confirmed, but seat refresh failed."
+        );
       }
     } catch (err) {
-      setError(errorMessage(err, "Failed to complete booking"));
+      setError(
+        errorMessage(err, "Failed to complete booking")
+      );
     } finally {
       operationInProgress.current = false;
       setIsCheckingOut(false);
@@ -829,6 +796,7 @@ function App() {
 
   const handleHoldExpired = useCallback(async () => {
     if (!activeHold || operationInProgress.current) return;
+
     await expireHold(activeHold, true);
   }, [activeHold, expireHold]);
 
@@ -853,7 +821,6 @@ function App() {
     );
   }
 
-
   return (
     <Box sx={{ minHeight: "100vh", py: 4 }}>
       <Container maxWidth="lg">
@@ -872,7 +839,10 @@ function App() {
             <Box>
               <Typography
                 variant="h3"
-                sx={{ fontWeight: 800, color: "primary.main" }}
+                sx={{
+                  fontWeight: 800,
+                  color: "primary.main",
+                }}
               >
                 SeatRush
               </Typography>
@@ -881,10 +851,18 @@ function App() {
                 Your seat. Your experience.
               </Typography>
 
-              <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ mt: 2 }}
+              >
                 <Chip
-                  label={isLoggedIn ? "FAN MODE" : "ADMIN MODE"}
-                  color={isLoggedIn ? "success" : "warning"}
+                  label={
+                    isLoggedIn ? "FAN MODE" : "ADMIN MODE"
+                  }
+                  color={
+                    isLoggedIn ? "success" : "warning"
+                  }
                   size="small"
                 />
 
@@ -920,22 +898,33 @@ function App() {
           </Stack>
 
           {error && (
-            <Alert severity="error" onClose={() => setError(null)}>
+            <Alert
+              severity="error"
+              onClose={() => setError(null)}
+            >
               {error}
             </Alert>
           )}
 
           {notice && (
-            <Alert severity="info" onClose={() => setNotice(null)}>
+            <Alert
+              severity="info"
+              onClose={() => setNotice(null)}
+            >
               {notice}
             </Alert>
           )}
 
           {!isLoggedIn && (
             <Stack spacing={3}>
-              <Paper sx={{ p: 4, borderRadius: 4 }}>
+              <Paper
+                sx={{ p: 4, borderRadius: 4 }}
+              >
                 <Stack
-                  direction={{ xs: "column", sm: "row" }}
+                  direction={{
+                    xs: "column",
+                    sm: "row",
+                  }}
                   spacing={2}
                   sx={{
                     justifyContent: "space-between",
@@ -962,7 +951,9 @@ function App() {
                   <Button
                     variant="contained"
                     size="large"
-                    onClick={() => setCreateEventOpen(true)}
+                    onClick={() =>
+                      setCreateEventOpen(true)
+                    }
                   >
                     + Create Event
                   </Button>
@@ -987,7 +978,10 @@ function App() {
                 {events.map((event) => (
                   <Paper
                     key={event.id}
-                    sx={{ p: 3, borderRadius: 3 }}
+                    sx={{
+                      p: 3,
+                      borderRadius: 3,
+                    }}
                   >
                     <Typography variant="h6">
                       {event.name}
@@ -997,14 +991,21 @@ function App() {
                       {event.venue}
                     </Typography>
 
-                    <Typography variant="body2" sx={{ mt: 2 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ mt: 2 }}
+                    >
                       Event date:{" "}
-                      {new Date(event.starts_at).toLocaleString()}
+                      {new Date(
+                        event.starts_at
+                      ).toLocaleString()}
                     </Typography>
 
                     <Typography variant="body2">
                       Ticket drop:{" "}
-                      {new Date(event.on_sale_at).toLocaleString()}
+                      {new Date(
+                        event.on_sale_at
+                      ).toLocaleString()}
                     </Typography>
                   </Paper>
                 ))}
@@ -1028,7 +1029,10 @@ function App() {
                 }}
               >
                 <Stack
-                  direction={{ xs: "column", sm: "row" }}
+                  direction={{
+                    xs: "column",
+                    sm: "row",
+                  }}
                   spacing={2}
                 >
                   <Button
@@ -1051,7 +1055,9 @@ function App() {
                         ? "contained"
                         : "outlined"
                     }
-                    startIcon={<ConfirmationNumberOutlined />}
+                    startIcon={
+                      <ConfirmationNumberOutlined />
+                    }
                     onClick={openMyTickets}
                     disabled={isBusy}
                     sx={{ minWidth: 160 }}
@@ -1061,26 +1067,32 @@ function App() {
                 </Stack>
               </Paper>
 
-              {/* My Tickets page */}
               {currentPage === "tickets" ? (
                 <MyTickets
                   fanId={fan.id}
                   onBack={backToEvents}
                 />
               ) : !selectedEvent ? (
-                /* Events page */
                 <Stack spacing={3}>
                   <Box>
-                    <Typography variant="h4" gutterBottom>
+                    <Typography
+                      variant="h4"
+                      gutterBottom
+                    >
                       Available Events
                     </Typography>
 
                     <Typography color="text.secondary">
-                      Discover upcoming events and reserve your seats.
+                      Discover upcoming events and reserve
+                      your seats.
                     </Typography>
 
-                    <Typography variant="body2" sx={{ mt: 1 }}>
-                      Active holds across events: {activeHoldCount}
+                    <Typography
+                      variant="body2"
+                      sx={{ mt: 1 }}
+                    >
+                      Active holds across events:{" "}
+                      {activeHoldCount}
                     </Typography>
                   </Box>
 
@@ -1096,14 +1108,14 @@ function App() {
                     }}
                   >
                     {events.map((event) => {
-                      const hold = holdsByEvent[event.id];
+                      const hold =
+                        holdsByEvent[event.id];
 
                       const hasActiveHold =
                         hold !== undefined &&
-                        Date.parse(hold.expires_at) > now;
-
-                      const hasOrder =
-                        ordersByEvent[event.id] !== undefined;
+                        Date.parse(
+                          hold.expires_at
+                        ) > now;
 
                       return (
                         <Box key={event.id}>
@@ -1114,14 +1126,12 @@ function App() {
                           />
 
                           {hasActiveHold && (
-                            <Alert severity="warning" sx={{ mt: 1 }}>
-                              Active Hold — {hold.seat_ids.length} seats
-                            </Alert>
-                          )}
-
-                          {hasOrder && (
-                            <Alert severity="success" sx={{ mt: 1 }}>
-                              Booking confirmed
+                            <Alert
+                              severity="warning"
+                              sx={{ mt: 1 }}
+                            >
+                              Active Hold —{" "}
+                              {hold.seat_ids.length} seats
                             </Alert>
                           )}
                         </Box>
@@ -1162,14 +1172,18 @@ function App() {
                       fanId={fan.id}
                       loading={isFindingBestSeats}
                       disabled={isBusy}
-                      onFindSeats={handleBestAvailable}
+                      onFindSeats={
+                        handleBestAvailable
+                      }
                     />
                   )}
 
                   <Box
                     sx={{
                       pointerEvents:
-                        isBusy || activeHold || completedOrder
+                        isBusy ||
+                        activeHold ||
+                        completedOrder
                           ? "none"
                           : "auto",
                       opacity: seatsLoading ? 0.6 : 1,
@@ -1177,16 +1191,22 @@ function App() {
                   >
                     <SeatMap
                       seats={seats}
-                      selectedSeatIds={selectedSeatIds}
+                      selectedSeatIds={
+                        selectedSeatIds
+                      }
                       onSelectSeat={toggleSeat}
                     />
                   </Box>
 
                   {!activeHold && !completedOrder && (
                     <SeatSummary
-                      selectedSeats={selectedSeats}
+                      selectedSeats={
+                        selectedSeats
+                      }
                       maxSeats={4}
-                      onHoldSeats={handleHoldSeats}
+                      onHoldSeats={
+                        handleHoldSeats
+                      }
                       isHolding={isHolding}
                     />
                   )}
@@ -1194,24 +1214,45 @@ function App() {
                   {activeHold && (
                     <Stack spacing={2}>
                       <Alert severity="success">
-                        <Typography sx={{ fontWeight: 700 }}>
+                        <Typography
+                          sx={{ fontWeight: 700 }}
+                        >
                           Seats held successfully!
                         </Typography>
 
-                        <Typography variant="body2" sx={{ mt: 1 }}>
-                          Hold ID: {activeHold.hold_id}
+                        <Typography
+                          variant="body2"
+                          sx={{ mt: 1 }}
+                        >
+                          Hold ID:{" "}
+                          {activeHold.hold_id}
                         </Typography>
 
-                        <Typography variant="body2" sx={{ mt: 1 }}>
-                          Seats: {activeHold.seat_ids.length}
+                        <Typography
+                          variant="body2"
+                          sx={{ mt: 1 }}
+                        >
+                          Seats:{" "}
+                          {activeHold.seat_ids.length}
                         </Typography>
                       </Alert>
 
-                      <Paper sx={{ p: 3, borderRadius: 4 }}>
+                      <Paper
+                        sx={{
+                          p: 3,
+                          borderRadius: 4,
+                        }}
+                      >
                         <HoldTimer
-                          key={activeHold.hold_id}
-                          expiresAt={activeHold.expires_at}
-                          onExpire={handleHoldExpired}
+                          key={
+                            activeHold.hold_id
+                          }
+                          expiresAt={
+                            activeHold.expires_at
+                          }
+                          onExpire={
+                            handleHoldExpired
+                          }
                         />
 
                         <Button
@@ -1220,7 +1261,9 @@ function App() {
                           fullWidth
                           sx={{ mt: 3 }}
                           disabled={isBusy}
-                          onClick={handleCheckout}
+                          onClick={
+                            handleCheckout
+                          }
                         >
                           {isCheckingOut
                             ? "Completing Booking..."
@@ -1233,19 +1276,30 @@ function App() {
                           fullWidth
                           sx={{ mt: 2 }}
                           disabled={isBusy}
-                          onClick={handleReleaseHold}
+                          onClick={
+                            handleReleaseHold
+                          }
                         >
-                          {isReleasing ? "Releasing..." : "Release Hold"}
+                          {isReleasing
+                            ? "Releasing..."
+                            : "Release Hold"}
                         </Button>
                       </Paper>
                     </Stack>
                   )}
 
                   {completedOrder && (
-                    <Paper sx={{ p: 4, borderRadius: 4 }}>
+                    <Paper
+                      sx={{
+                        p: 4,
+                        borderRadius: 4,
+                      }}
+                    >
                       <Stack
                         spacing={2}
-                        sx={{ alignItems: "center" }}
+                        sx={{
+                          alignItems: "center",
+                        }}
                       >
                         <CheckCircleOutlined
                           color="success"
@@ -1260,17 +1314,25 @@ function App() {
                         </Typography>
 
                         <Typography color="text.secondary">
-                          Your seats have been booked successfully.
+                          Your seats have been booked
+                          successfully.
                         </Typography>
 
-                        <Box sx={{ width: "100%", mt: 2 }}>
+                        <Box
+                          sx={{
+                            width: "100%",
+                            mt: 2,
+                          }}
+                        >
                           <Stack spacing={1}>
                             <Typography variant="body2">
-                              Order ID: {completedOrder.order_id}
+                              Order ID:{" "}
+                              {completedOrder.order_id}
                             </Typography>
 
                             <Typography variant="body2">
-                              Hold ID: {completedOrder.hold_id}
+                              Hold ID:{" "}
+                              {completedOrder.hold_id}
                             </Typography>
 
                             <Typography
@@ -1278,7 +1340,10 @@ function App() {
                               sx={{ fontWeight: 700 }}
                             >
                               Total: ₪
-                              {(completedOrder.total_agorot / 100).toFixed(2)}
+                              {(
+                                completedOrder.total_agorot /
+                                100
+                              ).toFixed(2)}
                             </Typography>
 
                             <Typography
@@ -1314,14 +1379,20 @@ function App() {
       <LoginDialog
         open={loginOpen}
         onClose={() => setLoginOpen(false)}
-        onLoginSuccess={handleLoginSuccess}
+        onLoginSuccess={
+          handleLoginSuccess
+        }
       />
 
       {!isLoggedIn && (
         <CreateEventDialog
           open={createEventOpen}
-          onClose={() => setCreateEventOpen(false)}
-          onCreated={handleEventCreated}
+          onClose={() =>
+            setCreateEventOpen(false)
+          }
+          onCreated={
+            handleEventCreated
+          }
         />
       )}
     </Box>

@@ -181,3 +181,55 @@ export async function markHoldReleased(
     [holdId]
   );
 }
+
+
+export type SeatAvailabilityRow = {
+  id: string;
+  zone_id: string;
+  row_label: string;
+  seat_number: number;
+  available: boolean;
+};
+
+export async function findEventSeatAvailability(
+  client: PoolClient,
+  eventId: string
+): Promise<SeatAvailabilityRow[]> {
+  const result = await client.query<SeatAvailabilityRow>(
+    `
+    SELECT
+      s.id,
+      s.zone_id,
+      s.row_label,
+      s.seat_number,
+      NOT EXISTS (
+        SELECT 1
+        FROM hold_seats hs
+        JOIN holds h ON h.id = hs.hold_id
+        WHERE hs.event_id = s.event_id
+          AND hs.seat_id = s.id
+          AND (
+            h.status = 'COMPLETED'
+            OR (
+              h.status = 'ACTIVE'
+              AND h.expires_at > NOW()
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM orders o
+              WHERE o.hold_id = h.id
+            )
+          )
+      ) AS available
+    FROM seats s
+    WHERE s.event_id = $1
+    ORDER BY
+      s.zone_id,
+      s.row_label,
+      s.seat_number
+    `,
+    [eventId]
+  );
+
+  return result.rows;
+}

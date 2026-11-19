@@ -1,11 +1,12 @@
+
 import { pool } from "@/db/pool";
 import type { PoolClient } from "pg";
-import { findSeatsForUpdate, findUnavailableSeats, countFanReservedSeats, insertHold, insertHoldSeats, findHoldForUpdate, markHoldReleased } from "@/repositories/hold.repository";
+import { findSeatsForUpdate, findUnavailableSeats, countFanReservedSeats, insertHold, insertHoldSeats, findHoldForUpdate, markHoldReleased, findEventSeatAvailability } from "@/repositories/hold.repository";
+import { createsLoneSeat } from "@/utils/noLoneSeats";
 import type { CreateHoldInput, CreateHoldResult } from "@/types/hold.types";
 
 const HOLD_TTL_SECONDS = Number(process.env.HOLD_TTL_SECONDS ?? 300);
 const MAX_SEATS_PER_FAN = Number(process.env.MAX_SEATS_PER_USER ?? 4);
-
 
 export async function createHold(
   eventId: string,
@@ -125,6 +126,19 @@ export async function createHoldInTransaction(
 
   if (existingCount + seatIds.length > MAX_SEATS_PER_FAN) {
     throw new Error("Seat limit exceeded");
+  }
+
+  // No Lone Seats validation
+  // Prevent creating a newly isolated available seat
+  const eventSeats = await findEventSeatAvailability(
+    client,
+    eventId
+  );
+
+  if (createsLoneSeat(eventSeats, seatIds)) {
+    throw new Error(
+      "This selection would leave a single isolated seat"
+    );
   }
 
   const hold = await insertHold(

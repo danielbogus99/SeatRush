@@ -1,3 +1,4 @@
+
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "@/db/pool";
@@ -29,7 +30,7 @@ describe("Rule 2 - All or Nothing", () => {
         'Test Venue',
         NOW() + INTERVAL '7 days',
         NOW() - INTERVAL '1 hour',
-        1, 4
+        1, 6
       )
       RETURNING id
       `
@@ -48,7 +49,7 @@ describe("Rule 2 - All or Nothing", () => {
       [eventId]
     );
 
-    for (let number = 1; number <= 4; number++) {
+    for (let number = 1; number <= 6; number++) {
       const seat = await pool.query<{ id: string }>(
         `
         INSERT INTO seats (
@@ -76,10 +77,11 @@ describe("Rule 2 - All or Nothing", () => {
     fan1Id = fan1.rows[0].id;
     fan2Id = fan2.rows[0].id;
 
-    // Fan 1 reserves A2.
+    // Fan 1 reserves A1 and A2.
+    // This leaves A3-A6 available together.
     await createHold(eventId, {
       fan_id: fan1Id,
-      seat_ids: [seatIds[1]],
+      seat_ids: [seatIds[0], seatIds[1]],
     });
   });
 
@@ -87,7 +89,7 @@ describe("Rule 2 - All or Nothing", () => {
     await expect(
       createHold(eventId, {
         fan_id: fan2Id,
-        seat_ids: [seatIds[0], seatIds[1], seatIds[2]],
+        seat_ids: [seatIds[1], seatIds[2], seatIds[3]],
       })
     ).rejects.toThrow("One or more seats are unavailable");
   });
@@ -109,7 +111,7 @@ describe("Rule 2 - All or Nothing", () => {
   it("3. Reserves all seats when available", async () => {
     const result = await createHold(eventId, {
       fan_id: fan2Id,
-      seat_ids: [seatIds[0], seatIds[2]],
+      seat_ids: [seatIds[2], seatIds[3]],
     });
 
     const saved = await pool.query<{ seat_id: string }>(
@@ -118,7 +120,7 @@ describe("Rule 2 - All or Nothing", () => {
     );
 
     expect(saved.rows.map((row) => row.seat_id).sort()).toEqual(
-      [seatIds[0], seatIds[2]].sort()
+      [seatIds[2], seatIds[3]].sort()
     );
   });
 
@@ -137,18 +139,44 @@ describe("Rule 2 - All or Nothing", () => {
       "DELETE FROM orders WHERE hold_id IN (SELECT id FROM holds WHERE event_id = $1)",
       [eventId]
     );
-    await pool.query("DELETE FROM hold_seats WHERE event_id = $1", [eventId]);
-    await pool.query("DELETE FROM holds WHERE event_id = $1", [eventId]);
-    await pool.query("DELETE FROM seats WHERE event_id = $1", [eventId]);
-    await pool.query("DELETE FROM zones WHERE event_id = $1", [eventId]);
-    await pool.query("DELETE FROM events WHERE id = $1", [eventId]);
+
+    await pool.query(
+      "DELETE FROM hold_seats WHERE event_id = $1",
+      [eventId]
+    );
+
+    await pool.query(
+      "DELETE FROM holds WHERE event_id = $1",
+      [eventId]
+    );
+
+    await pool.query(
+      "DELETE FROM seats WHERE event_id = $1",
+      [eventId]
+    );
+
+    await pool.query(
+      "DELETE FROM zones WHERE event_id = $1",
+      [eventId]
+    );
+
+    await pool.query(
+      "DELETE FROM events WHERE id = $1",
+      [eventId]
+    );
 
     if (fan1Id) {
-      await pool.query("DELETE FROM fans WHERE id = $1", [fan1Id]);
+      await pool.query(
+        "DELETE FROM fans WHERE id = $1",
+        [fan1Id]
+      );
     }
 
     if (fan2Id) {
-      await pool.query("DELETE FROM fans WHERE id = $1", [fan2Id]);
+      await pool.query(
+        "DELETE FROM fans WHERE id = $1",
+        [fan2Id]
+      );
     }
   });
 });
