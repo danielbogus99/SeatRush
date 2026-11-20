@@ -86,19 +86,43 @@ CREATE TABLE IF NOT EXISTS hold_seats (
         REFERENCES seats(event_id, id)
 );
 
+
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     hold_id UUID NOT NULL UNIQUE,
     fan_id UUID NOT NULL REFERENCES fans(id),
 
-    total_agorot INTEGER NOT NULL CHECK (total_agorot >= 0),
+    subtotal_agorot INTEGER NOT NULL
+        CHECK (subtotal_agorot >= 0),
+
+    promo_code VARCHAR(20)
+        CHECK (
+            promo_code IS NULL
+            OR promo_code IN ('SAVE10', 'WELCOME20')
+        ),
+
+    discount_agorot INTEGER NOT NULL DEFAULT 0
+        CHECK (discount_agorot >= 0),
+
+    total_agorot INTEGER NOT NULL
+        CHECK (total_agorot >= 0),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT orders_discount_valid CHECK (
+        discount_agorot <= subtotal_agorot
+        AND total_agorot = subtotal_agorot - discount_agorot
+    ),
 
     FOREIGN KEY (hold_id, fan_id)
         REFERENCES holds(id, fan_id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_welcome20_per_fan
+ON orders (fan_id)
+WHERE promo_code = 'WELCOME20';
+
 
 
 -- Demo event for fresh installations

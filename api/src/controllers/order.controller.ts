@@ -1,9 +1,7 @@
-
 import type { Request, Response } from "express";
 import { checkout, getFanOrders } from "@/services/order.service";
 import type { CheckoutInput } from "@/types/order.types";
 
-// Checkout an existing hold
 export async function checkoutController(
   req: Request,
   res: Response
@@ -23,7 +21,10 @@ export async function checkoutController(
 
     let status = 500;
 
-    if (message === "Invalid checkout information") {
+    if (
+      message === "Invalid checkout information" ||
+      message === "Invalid promo code"
+    ) {
       status = 400;
     } else if (message === "Hold not found") {
       status = 404;
@@ -33,7 +34,8 @@ export async function checkoutController(
       message === "Hold is not active" ||
       message === "Hold has expired" ||
       message === "Hold has no valid seats" ||
-      message === "Hold is no longer active"
+      message === "Hold is no longer active" ||
+      message === "Promo code already used"
     ) {
       status = 409;
     } else {
@@ -46,7 +48,6 @@ export async function checkoutController(
   }
 }
 
-// Get all orders for a fan
 export async function getFanOrdersController(
   req: Request,
   res: Response

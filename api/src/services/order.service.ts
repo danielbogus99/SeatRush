@@ -1,8 +1,7 @@
-
 import { pool } from "@/db/pool";
 import { findHoldForUpdate } from "@/repositories/hold.repository";
-import { findOrderByHoldId, calculateHoldTotal, insertOrder, markHoldCompleted, findOrdersByFanId } from "@/repositories/order.repository";
-import type { CheckoutInput, CheckoutResult, CheckoutServiceResult, OrderRow, MyTicketResult } from "@/types/order.types";
+import { findOrderByHoldId, calculateHoldTotal, insertOrder, markHoldCompleted, findOrdersByFanId, hasUsedWelcome20 } from "@/repositories/order.repository";
+import type { CheckoutInput, CheckoutResult, CheckoutServiceResult, OrderRow, MyTicketResult, PromoCode } from "@/types/order.types";
 
 export async function checkout(
   holdId: string,
@@ -51,17 +50,59 @@ export async function checkout(
       throw new Error("Hold has expired");
     }
 
-    const totalAgorot = await calculateHoldTotal(client, holdId);
+    const subtotalAgorot = await calculateHoldTotal(client, holdId);
 
-    if (totalAgorot <= 0) {
+    if (subtotalAgorot <= 0) {
       throw new Error("Hold has no valid seats");
+    }
+
+    const rawPromoCode = data.promo_code;
+
+    if (
+      rawPromoCode !== undefined &&
+      rawPromoCode !== null &&
+      typeof rawPromoCode !== "string"
+    ) {
+      throw new Error("Invalid promo code");
+    }
+
+    const promoCodeInput = rawPromoCode?.trim().toUpperCase() ?? "";
+
+    let promoCode: PromoCode | null = null;
+    let discountAgorot = 0;
+
+    if (promoCodeInput !== "") {
+      if (promoCodeInput === "SAVE10") {
+        promoCode = "SAVE10";
+
+        discountAgorot = Math.floor(
+          (subtotalAgorot * 10 + 50) / 100
+        );
+      } else if (promoCodeInput === "WELCOME20") {
+        promoCode = "WELCOME20";
+
+        const alreadyUsed = await hasUsedWelcome20(
+          client,
+          data.fan_id
+        );
+
+        if (alreadyUsed) {
+          throw new Error("Promo code already used");
+        }
+
+        discountAgorot = Math.min(subtotalAgorot, 2000);
+      } else {
+        throw new Error("Invalid promo code");
+      }
     }
 
     const order = await insertOrder(
       client,
       holdId,
       data.fan_id,
-      totalAgorot
+      subtotalAgorot,
+      promoCode,
+      discountAgorot
     );
 
     await markHoldCompleted(client, holdId);
@@ -74,13 +115,24 @@ export async function checkout(
     };
   } catch (error) {
     await client.query("ROLLBACK");
+
+    
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "23505" &&
+      "constraint" in error &&
+      error.constraint === "unique_welcome20_per_fan"
+    ) {
+      throw new Error("Promo code already used");
+    }
+
     throw error;
   } finally {
     client.release();
   }
 }
 
-// Get all orders belonging to a fan.
 export async function getFanOrders(
   fanId: string
 ): Promise<MyTicketResult[]> {
@@ -99,6 +151,9 @@ export async function getFanOrders(
       event_name: order.event_name,
       venue: order.venue,
       starts_at: order.starts_at,
+      subtotal_agorot: order.subtotal_agorot,
+      promo_code: order.promo_code,
+      discount_agorot: order.discount_agorot,
       total_agorot: order.total_agorot,
       created_at: order.created_at,
       seat_ids: order.seat_ids,
@@ -113,6 +168,9 @@ function toCheckoutResult(order: OrderRow): CheckoutResult {
     order_id: order.id,
     hold_id: order.hold_id,
     fan_id: order.fan_id,
+    subtotal_agorot: order.subtotal_agorot,
+    promo_code: order.promo_code,
+    discount_agorot: order.discount_agorot,
     total_agorot: order.total_agorot,
     created_at: order.created_at,
   };

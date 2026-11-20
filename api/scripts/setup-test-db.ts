@@ -56,15 +56,51 @@ async function setupTestDatabase(): Promise<void> {
   try {
     await testClient.connect();
 
+    const currentDatabase = await testClient.query<{
+      current_database: string;
+    }>("SELECT current_database()");
+
+    if (
+      currentDatabase.rows[0]?.current_database !==
+      TEST_DB_NAME
+    ) {
+      throw new Error(
+        "Refusing to reset a non-test database"
+      );
+    }
+
     const schemaPath = fileURLToPath(
       new URL("../sql/001_init.sql", import.meta.url)
     );
 
     const schema = await readFile(schemaPath, "utf8");
 
-    await testClient.query(schema);
+    await testClient.query("BEGIN");
 
-    console.log("Test database schema initialized");
+    try {
+      await testClient.query(`
+        DROP TABLE IF EXISTS
+          orders,
+          hold_seats,
+          holds,
+          seats,
+          zones,
+          fans,
+          events
+        CASCADE
+      `);
+
+      await testClient.query(schema);
+
+      await testClient.query("COMMIT");
+
+      console.log(
+        "Test database schema recreated successfully"
+      );
+    } catch (error) {
+      await testClient.query("ROLLBACK");
+      throw error;
+    }
   } finally {
     await testClient.end();
   }
