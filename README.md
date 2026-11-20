@@ -1,24 +1,24 @@
 # SeatRush
 
-SeatRush is a full-stack ticket booking application built with **React, TypeScript, Express, and PostgreSQL**.
+SeatRush is a full-stack ticket booking application built with **React, TypeScript, Node.js, Express, and PostgreSQL**.
 
-The application allows fans to browse events, select seats, temporarily reserve them, and complete bookings. It also provides an admin interface for creating events and configuring seating layouts and pricing zones.
+Fans can browse events, select seats, reserve them temporarily, and complete bookings. The application also includes an admin interface for creating events and configuring seating layouts and pricing zones.
 
-## 1. How to Run
+The system focuses on transactional consistency, concurrent reservations, and preventing double-booking.
+
+## 1. Getting Started
 
 **Requirements:** Docker and Docker Compose.
 
-From the project root, run:
-
 ```bash
+git clone https://github.com/danielbogus99/SeatRush.git
+cd SeatRush
 docker compose up --build
 ```
 
-The command starts PostgreSQL, the API, and the frontend.
+Docker automatically installs dependencies, starts PostgreSQL, initializes the database, and launches the application.
 
-On a fresh database, the application automatically creates the database tables and a demo concert with 60 seats. The demo event is already on sale.
-
-**Application URLs:**
+A demo concert with **60 seats** is created automatically on a fresh database. No `.env` file or manual database setup is required.
 
 | Service | URL |
 |---|---|
@@ -33,183 +33,142 @@ To stop the application:
 docker compose down
 ```
 
-PostgreSQL data is preserved in a Docker volume.
+Database data is preserved in a Docker volume.
+
+### Port Conflicts
+
+PostgreSQL runs on Docker's internal network and does not require an exposed host port.
+
+If the default frontend or API ports are unavailable, override them:
+
+**Git Bash / Linux / macOS:**
+
+```bash
+WEB_PORT=8080 API_PORT=3001 docker compose up --build
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:WEB_PORT="8080"
+$env:API_PORT="3001"
+docker compose up --build
+```
+
+The frontend will then be available at http://localhost:8080.
 
 ## 2. Features
 
 ### Fan Features
 
-- **Event browsing:** View available events, venues, event dates, and ticket sale times.
-- **Interactive seat selection:** View seat availability and select up to four seats per fan per event, subject to the booking rules.
-- **Temporary seat holds:** Reserve selected seats for a limited time before checkout.
-- **Multiple event holds:** Maintain active holds across different events and return to them while they remain valid.
-- **Hold countdown:** View the remaining time before a hold expires.
-- **Best Available:** Automatically find available seats according to the requested criteria.
-- **Booking checkout:** Convert a valid hold into a confirmed order.
-- **Promo codes:** Apply an optional discount code during checkout.
-- **My Tickets:** View previously completed bookings.
+- Browse events and view interactive seating layouts.
+- Select seats and create temporary holds with a **5-minute countdown**.
+- Maintain active holds across multiple events.
+- Find seats automatically using **Best Available**, based on zone and maximum price.
+- Complete bookings and view purchased tickets in **My Tickets**.
+- Apply optional promo codes during checkout.
 
 ### Admin Features
 
-- Create new events.
-- Configure event dates, venues, and ticket sale start times.
-- Define the seating layout using rows and seats per row.
-- Configure pricing zones with different ticket prices.
-- View existing events.
+- Create events with configurable dates, venues, and sale times.
+- Define seating layouts and pricing zones.
+- Validate seating and pricing configurations.
 
 ### Booking Rules
 
-- Seat holds are temporary and expire automatically.
-- Seat reservations are processed atomically to prevent partial reservations.
-- Concurrent booking requests are handled to prevent double-selling.
-- A fan may book a maximum of four seats per event across completed orders and active holds.
-- The system enforces the No Lone Seats rule to prevent leaving isolated available seats.
-- Checkout requires a valid active hold.
-- Completed bookings are stored in PostgreSQL.
+- Maximum **4 seats per fan per event**, including active holds and completed orders.
+- Atomic reservations and transactional locking prevent double-selling.
+- **No Lone Seats** validation prevents leaving isolated available seats.
+- Checkout requires a valid active hold and supports idempotency.
+- PostgreSQL is the authoritative source for reservations and bookings.
 
-## 3. Promo Codes
+## 3. Bonus Features
 
-SeatRush supports optional promo codes during checkout.
+### Promo Codes
 
-| Promo Code | Discount | Usage Rule |
+| Code | Discount | Usage |
 |---|---|---|
-| `SAVE10` | 10% off | Reusable across separate orders |
+| `SAVE10` | 10% off | Reusable |
 | `WELCOME20` | ₪20 off | Once per fan |
 
-**Promo code rules:**
+Promo codes are case-insensitive, limited to one per order, and validated by the backend. Discounts use integer agorot, and once-per-fan redemption is enforced in PostgreSQL.
 
-- Only one promo code can be applied per order.
-- Promo codes are case-insensitive.
-- Discounts are calculated in integer agorot to avoid floating-point inaccuracies.
-- The final order total cannot be negative.
-- Reusing `WELCOME20` for the same fan is rejected.
-- Promo code validation and discount calculations are performed by the backend.
+### Live Seat Availability
 
-## 4. How to Test
+Seat availability refreshes automatically every **5 seconds** using API polling.
 
-Backend tests use Vitest and a separate PostgreSQL test database.
+### Admin Event Creation
 
-Start PostgreSQL through Docker Compose, then run:
+Events, seating layouts, and pricing zones can be configured directly through the admin interface.
+
+### Concurrency Testing
+
+A targeted test performs **50 simultaneous reservation attempts** for the same seat. Exactly one succeeds, demonstrating double-booking prevention in this scenario.
+
+## 4. Testing
+
+Backend tests use **Vitest** and a separate PostgreSQL database named `seatrush_test`.
+
+### Backend Tests
+
+Install Node.js and configure a dedicated PostgreSQL test database.
+
+Create `api/.env.test` with the appropriate connection details:
+
+```dotenv
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=seatrush
+DB_PASSWORD=seatrush_dev
+DB_NAME=seatrush_test
+```
+
+Adjust the connection settings to match your local test database.
+
+From the project root:
 
 ```bash
 cd api
-npm install
+npm ci
 npm run db:test:setup
 npm test
 ```
 
-The test suite covers:
+**Important:** The test setup recreates database tables. Never point it at the main `seatrush` database.
 
-- Seat holds and all-or-nothing reservations.
-- Concurrent requests and double-selling prevention.
-- Per-fan seat limits.
-- Hold expiry and event sale times.
-- Best-available seat selection.
-- Checkout and order creation.
+**Latest verified result: 40 tests across 10 files, all passing.**
 
-The previously verified test run completed **35 tests across 9 files**, all passing.
+Tests cover reservations, concurrency, seat limits, hold expiration, Best Available, checkout, and promo codes.
 
-The frontend has also been manually tested for event creation, seat selection, multiple holds, hold release, checkout, promo codes, and ticket viewing.
+### Frontend Verification
 
-## 5. Environment Variables
+From the project root:
 
-The backend uses these environment variables:
+```bash
+cd web
+npm ci
+npm run build
+npm run lint
+```
 
-| Variable | Description | Docker value |
-|---|---|---|
-| `PORT` | API listening port | `3000` |
-| `DB_HOST` | PostgreSQL host | `db` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_USER` | Database user | `seatrush` |
-| `DB_PASSWORD` | Database password | `seatrush_dev` |
-| `DB_NAME` | Database name | `seatrush` |
+The frontend booking and admin workflows have also been tested manually.
 
-Docker Compose configures these variables automatically.
+## 5. Architecture & Limitations
 
-For local backend development, PostgreSQL is exposed on `localhost:55432`.
+- **Frontend:** React, TypeScript, and Nginx.
+- **Backend:** Node.js, Express, and REST APIs.
+- **Database:** PostgreSQL with transactional reservation handling.
+- **Deployment:** Docker Compose.
+- **State:** Active holds are tracked in browser session storage, while PostgreSQL determines their actual validity.
 
-The test configuration uses a separate database named `seatrush_test`.
+### Known Limitations
 
-The included credentials are for local development only.
+- Username-based fan identification is simplified and does not provide secure authentication.
+- Checkout does not process real payments.
+- Production-scale load testing, monitoring, and background cleanup of historical holds are not implemented.
+- Included database credentials are intended for local development only.
 
-## 6. Fan Identification
+For further details, see:
 
-Fans are identified by a unique username.
-
-When a fan logs in through `POST /api/fans/login`, the backend creates or retrieves their fan record and returns a unique UUID.
-
-This UUID is used to associate seat holds, checkout operations, promo code usage, and orders with the fan.
-
-Seat holds and checkout requests include `fan_id`.
-
-This is a simplified identification system for the assignment. It does not implement password-based authentication or secure identity verification.
-
-## 7. Frontend Architecture
-
-The frontend uses React with TypeScript and separates responsibilities across reusable components, API modules, and custom hooks.
-
-Key responsibilities include:
-
-- **`App.tsx`:** Application navigation and coordination between views.
-- **`useEventHolds.ts`:** Active hold management, browser session persistence, and expiration handling.
-- **`useBooking.ts`:** Hold creation, Best Available, release operations, and checkout.
-- **API modules:** Communication with the Express backend.
-- **Reusable components:** Event listings, seat maps, booking checkout, booking confirmation, and admin interfaces.
-
-The frontend maintains active hold information in browser session storage. PostgreSQL remains the authoritative source for reservation validity and seat availability.
-
-## 8. Bonus Features (+5)
-
-In addition to the core booking requirements, SeatRush includes several bonus features.
-
-### Admin Event Creation
-
-An admin interface allows new events to be created directly from the application.
-
-Administrators can:
-
-- Configure event names, venues, and dates.
-- Set ticket sale start times.
-- Define seating layouts with configurable rows and seats per row.
-- Create pricing zones with different ticket prices.
-- Validate that pricing zones cover the seating layout without gaps or overlaps.
-
-### Live Seat Availability
-
-The application automatically refreshes seat availability every **5 seconds** while viewing an event.
-
-This allows fans to see changes caused by other users' reservations without manually refreshing the page.
-
-The implementation uses periodic API polling rather than WebSockets.
-
-PostgreSQL remains the authoritative source of seat availability.
-
-### Promo Code System
-
-A custom discount system was implemented as an additional feature.
-
-- `SAVE10` provides a reusable 10% discount.
-- `WELCOME20` provides a ₪20 discount once per fan.
-- Only one promo code can be applied per order.
-- Discount validation and calculations are performed by the backend.
-- Once-per-fan redemption is enforced at the database level.
-- Monetary calculations use integer agorot to avoid floating-point inaccuracies.
-
-### Concurrency Testing
-
-The backend includes a concurrency test that sends **50 simultaneous reservation attempts** for the same seat.
-
-The verified result was exactly one successful hold, demonstrating that the transactional locking mechanism prevents double-selling under this test scenario.
-
-This is a targeted concurrency correctness test, not a production-scale load test.
-
-## 9. Known Gaps
-
-- **Authentication:** Username-based identification is not secure authentication. Production would require proper authentication and authorization.
-- **Payments:** Checkout creates an order without processing a real payment.
-- **Scalability:** The application has not been load-tested with production-scale traffic.
-- **Background cleanup:** A scheduled cleanup process for historical expired or released holds is not implemented.
-- **Monitoring:** Production logging, metrics, and alerting are not configured.
-- **Security:** Development database credentials must be replaced with securely managed secrets before production deployment.
-
-Further architectural decisions and production considerations are documented in `DECISIONS.md`.
+- [DECISIONS.md](DECISIONS.md) — Architecture, design decisions, and tradeoffs.
+- [AI_LOG.md](AI_LOG.md) — AI-assisted development documentation.
